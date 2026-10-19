@@ -13,8 +13,11 @@ def mem(with_block=True):
     m = S.Mem(); m.add(0x06000000, 0x100000); m.add(0x05C00000, 0x80000); m.add(0x05F00000, 0x1000)
     m.add(0x05F80000, 0x200); m.add(0x05890000, 0x100)
     b0, rlab = H.patch_0bios(B0)
-    for i, x in enumerate(b0): pass
     m._f(H.LOAD)[0][H.LOAD - 0x06000000:H.LOAD - 0x06000000 + len(b0)] = b0
+    assert m.r32(H.MAIN_LIT) == H.BOOT
+    S.run(m, H.BOOT, stop=H.MAIN)                                      # 부팅 설치기 → 상주 자리 채우고 main 으로
+    img, _ = H.image()
+    assert bytes(m.r8(H.RESI + i) for i in range(len(img))) == img, '설치기 복사 다름'
     sb, _ = subs.blob(H.SUBS)
     blk, lab = H.block(sb)
     if with_block:
@@ -88,8 +91,9 @@ def main():
     called = []
     S.run(m, rlab['rvbi'], calls={H.VBI: lambda r, mm: called.append(1)})
     hit = m.r16(H.LIST) == 0x8000 and called == [1]; print('본체 없음 → 원래 처리기만 %s' % hit); ok &= hit
-    res, _ = H.resident(); sb, _ = subs.blob(H.SUBS); blk, _ = H.block(sb)
-    print('상주 %d B(자리 %d) · 본체 %d B → 끝 %s(한계 %s)' % (len(res), H.RESI_END - H.RESI, len(blk), hex(H.BLOCK + len(blk)), hex(H.BLOCK_END)))
+    res, _ = H.resident(); sb, _ = subs.blob(H.SUBS); blk, _ = H.block(sb); bt = H.boot()
+    print('상주 %d B(자리 %d, TPL %s) · 설치기+그림 %d B(자리 %d) · 본체 %d B → 끝 %s(한계 %s)' % (
+        len(res), H.TPL - H.RESI, hex(H.TPL), len(bt), H.BOOT_END - H.BOOT, len(blk), hex(H.BLOCK + len(blk)), hex(H.BLOCK_END)))
     print('결과', '통과' if ok else '실패')
 
 

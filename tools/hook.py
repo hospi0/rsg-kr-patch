@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 r"""레이디언트 실버건 CD-DA 대사 자막 훅(2026-10-19, 건담 외전 I hook.py(VDP1 스프라이트판) 를 옮김)
   · SGL 처리기 = 건담 외전과 같은 코드(위치만 다름) — VBlank-OUT·VBlank-IN·DMA 끝 등록 리터럴을 «상주 감싸개»로 돌림.
-  · 상주 감싸개(0BIOS.BIN 안 0 틈 RESI, 참조 없음·스테이트 7장 모두 0): 원래 처리기 부른 뒤 BLOCK 머리 'RSCD' 와 끝 표식이
+  · 상주 감싸개(RESI 0x06042C00 — 부팅 설치기가 복사, 아래 설명): 원래 처리기 부른 뒤 BLOCK 머리 'RSCD' 와 끝 표식이
     둘 다 맞을 때만 본체로 점프. 본체가 없으면(타이틀·동영상 등) 아무것도 안 함.
   · 본체+자막 자료 BLOCK = 0x060B3000: 스테이지 파일 STGxx.BIN(0x0607C000 적재, 파일 크기만큼 통째 읽기)을 0x37000 까지 0 채움 뒤에 붙임.
     (STG03 BSS ~0x060B0430·ESP 0x060B1E00 < BLOCK < 0BIOS 0x060B9000, 스테이트 7장 모두 0)
@@ -14,7 +14,7 @@ r"""레이디언트 실버건 CD-DA 대사 자막 훅(2026-10-19, 건담 외전 
           → 자막 켜진 동안 PRISB 위 바이트(S3)·PRISD 아래 바이트(S6) = 7(레지스터만 — SGL 이 VBlank-IN 에 사본을 DMA 하므로 VBlank-IN 뒤 다시).
           좌표는 게임 지역 좌표(176,112 — 화면 352×224) 기준 → XA = −w8·4, YA = 112 − nrow·8 − 4.
           매 VBI 뒤 명령표(0x25C00000)를 END 까지 따라가 그 칸만 «건너뛰고 점프(0x5000) → 우리 칸 0x7000(명령+END)». 꺼지면 END 로.
-  · ★END 견본: SGL 간접 DMA 표의 마지막 항목(30 B, 원래 0x060069E6)을 가리키는 리터럴 0x06006A00 → 우리 견본 TPL(0BIOS 0 틈).
+  · ★END 견본: SGL 간접 DMA 표의 마지막 항목(30 B, 원래 0x060069E6)을 가리키는 리터럴 0x06006A00 → 우리 견본 TPL(0x06042D00).
 """
 import os, struct, sys
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE)
@@ -43,10 +43,16 @@ dt = lambda n: 0x4010 | n << 8
 push = lambda m: 0x2F06 | m << 4; pop = lambda n: 0x60F6 | n << 8
 
 LOAD = 0x06003000                         # 0BIOS.BIN 적재 주소
-# 0BIOS 안 0 틈(파일 0·스테이트 7장 모두 0·가리키는 리터럴 없음): 0x06003C9C‥0x06003E7C · 0x06015F10‥0x0601604C
-#   ⛔0x060044E0‥0x06004810 은 뒤 스테이트에서 써짐(2026-10-19 확인) · 0x0601605C‥ 는 리터럴이 가리킴
-RESI = 0x06003CA0; RESI_END = 0x06003E7C
-TPL = 0x06015F40; GAP2 = (0x06015F10, 0x0601604C)
+# ★상주 자리(2026-10-19 6차 «적 공격 때 그래픽 깨짐» 뒤 옮김):
+#   ⛔옛 자리 0x06003CA0 = 주변기기 자료 버퍼(포인터 0x06003C7C, 0x200 B) 안 · ⛔옛 TPL 0x06015F40 = SGL 이벤트 칸 배열 안
+#     → 적이 공격 효과 이벤트를 그 칸에 잡으면 이벤트 자료가 «END 견본»으로 VDP1 명령표 끝에 DMA 돼 쓰레기 다각형(흰 막대·초록 선).
+#   → 0x06042C00‥0x06043000: BSS 끝(0x0604227C, = sbrk 힙 시작 — 힙 포인터 0x0601AE64 는 스테이트 15장 모두 0, 한 번도 안 씀)과
+#     GAME.BIN(0x06043000) 사이, 파일·스테이트 15장 모두 0, 참조 없음. 힙이 조금 쓰여도 안 닿게 위쪽 1 KB 만.
+#   어느 파일에도 안 실리므로 «부팅 설치기» BOOT 가 시작 코드의 main 호출(리터럴 0x0600B988 = 0x060082F0)을 가로채
+#   0BIOS 파일 안 IMG(주변기기 버퍼 자리 — 부팅 때만 필요, 뒤에 덮여도 됨)를 RESI 로 복사한 뒤 main 으로 점프.
+RESI = 0x06042C00; TPL = 0x06042D00; RESI_END = 0x06043000                  # 감싸개 ≤ 0x100 B 바로 뒤 TPL(32 B)
+BOOT = 0x06003D00; BOOT_END = 0x06003E7C                         # 설치기 + 상주 그림 원본(파일 0 자리)
+MAIN, MAIN_LIT = 0x060082F0, 0x0600B988
 VBI, VBI_LIT = 0x0600593E, 0x06005B50
 VIN, VIN_LIT = 0x060057E6, 0x06005B4C
 DMAE, DMAE_LIT = 0x060057D4, 0x06005B5C
@@ -82,7 +88,7 @@ def data_part():
 
 
 def resident():
-    """0BIOS 0 틈에 들어갈 감싸개 3개 → (코드, 라벨)"""
+    """상주 자리 RESI 에 실릴 감싸개 3개 → (코드, 라벨)"""
     a = A(RESI); W = a.w
     for name, orig, slot in (('rvbi', VBI, 2), ('rvin', VIN, 3), ('rdmae', DMAE, 4)):
         a.L(name); W(0x4F22, 0x4F02, 0x4F12)                          # PR·MACH·MACL(그리기에 mul)
@@ -92,8 +98,35 @@ def resident():
         W(0x5010 | slot, 0x400B, 0x0009)
         a.L(name + 'x'); W(0x4F16, 0x4F06, 0x4F26, 0x000B, 0x0009)
     code = a.build()
-    assert RESI + len(code) <= RESI_END, hex(RESI + len(code))
+    assert RESI + len(code) <= TPL, hex(RESI + len(code))
     return code, a.lab
+
+
+def image():
+    """RESI‥TPL+32 에 복사될 그림: 감싸개 + 0 + TPL(처음 = END)"""
+    res, rlab = resident()
+    img = bytearray(TPL + 32 - RESI)
+    img[:len(res)] = res
+    img[TPL - RESI:TPL - RESI + 2] = b'\x80\x00'
+    return bytes(img), rlab
+
+
+def boot():
+    """부팅 설치기: IMG(설치기 바로 뒤) → RESI 로 복사 후 main 으로 jmp(PR 그대로 → main 은 원래 호출자에게 돌아감)"""
+    img, _ = image()
+    n = len(img) // 4
+    a = A(BOOT); W = a.w
+    a.ld(1, 'img'); a.ld(2, RESI); a.ld(3, n)
+    a.L('cp'); W(0x6016, 0x2202, addi(2, 4), dt(3)); a.br('bf', 'cp')       # mov.l @r1+,r0 · mov.l r0,@r2
+    a.ld(0, MAIN); W(0x402B, 0x0009)                                       # jmp @r0
+    a.lab['img'] = BOOT                                                    # 임시(크기만 재기)
+    code0 = a.build()
+    a.lab['img'] = BOOT + (len(code0) + 3) // 4 * 4                         # 리터럴 풀 뒤(같은 크기로 다시 조립)
+    code = a.build()
+    assert len(code) == len(code0)
+    out = code + bytes(a.lab['img'] - BOOT - len(code)) + img
+    assert BOOT + len(out) <= BOOT_END, hex(BOOT + len(out))
+    return out
 
 
 def assemble(end_magic_addr):
@@ -254,20 +287,21 @@ def block(sub_blob):
 
 
 def patch_0bios(b0):
-    """0BIOS.BIN: 처리기 리터럴 3개 → 상주 감싸개 · END 견본 리터럴 → TPL(처음 = END) — 크기 그대로"""
+    """0BIOS.BIN(크기 그대로): 설치기+상주 그림 → BOOT 자리 · main 호출 리터럴 → BOOT ·
+       처리기 리터럴 3개 → 상주 감싸개(RESI) · END 견본 리터럴 → TPL(RESI 안)"""
     b = bytearray(b0)
-    res, rlab = resident()
-    o = RESI - LOAD
-    assert b[o - 4:RESI_END - LOAD] == bytes(RESI_END - LOAD - o + 4), '상주 자리가 0 이 아님'
-    b[o:o + len(res)] = res
+    _, rlab = image()
+    bt = boot()
+    o = BOOT - LOAD
+    assert b[o:BOOT_END - LOAD] == bytes(BOOT_END - BOOT), '설치기 자리가 0 이 아님'
+    b[o:o + len(bt)] = bt
+    assert struct.unpack_from('>I', b, MAIN_LIT - LOAD)[0] == MAIN
+    struct.pack_into('>I', b, MAIN_LIT - LOAD, BOOT)
     for lit, old, new in ((VBI_LIT, VBI, rlab['rvbi']), (VIN_LIT, VIN, rlab['rvin']), (DMAE_LIT, DMAE, rlab['rdmae'])):
         assert struct.unpack_from('>I', b, lit - LOAD)[0] == old, hex(lit)
         struct.pack_into('>I', b, lit - LOAD, new)
     assert struct.unpack_from('>I', b, TPL_LIT - LOAD)[0] == TPL_OLD
     struct.pack_into('>I', b, TPL_LIT - LOAD, 0x80000000 | TPL)
-    t = TPL - LOAD
-    assert b[GAP2[0] - LOAD:GAP2[1] - LOAD] == bytes(GAP2[1] - GAP2[0]) and GAP2[0] <= TPL and TPL + 32 <= GAP2[1]
-    b[t:t + 2] = b'\x80\x00'                                            # 견본 처음 = END
     assert len(b) == len(b0)
     return bytes(b), rlab
 
